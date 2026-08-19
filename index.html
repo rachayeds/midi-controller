@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Live MIDI Controller (Standalone)</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#12161c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { margin:0; padding:0; height:100%; background:#12161c; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+  #topbar { display:flex; align-items:center; gap:8px; padding:8px; background:#0b0e13; flex-wrap:wrap; }
+  #topbar select, #topbar button {
+    background:#22293a; color:#fff; border:none; border-radius:6px; padding:8px 10px; font-size:13px;
+  }
+  #status { color:#9aa5b1; font-size:12px; margin-left:auto; }
+  #pageLabel { color:#ffb454; font-weight:bold; font-size:14px; }
+
+  #noMidiBanner {
+    display:none; background:#5c1a1a; color:#fff; padding:10px 14px; font-size:13px; line-height:1.5;
+  }
+  #noMidiBanner.show { display:block; }
+
+  #grid {
+    display:grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: 1fr;
+    gap:6px;
+    padding:8px;
+    height: calc(100vh - 130px);
+  }
+  @media (min-width: 700px) {
+    #grid { grid-template-columns: repeat(8, 1fr); }
+  }
+
+  .pad {
+    background:#2d3b4f; color:#fff; border-radius:10px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:13px; font-weight:600; text-align:center; padding:4px; line-height:1.3;
+    touch-action: manipulation; position:relative;
+  }
+  .pad small { opacity:0.65; font-weight:400; font-size:10px; margin-top:2px; }
+  .pad.active { background:#ff8c1a !important; }
+  .pad:active { filter: brightness(1.2); }
+  .pad .editIcon {
+    position:absolute; top:4px; right:6px; font-size:11px; opacity:0.4;
+  }
+
+  #bottombar {
+    position:fixed; bottom:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:center;
+    background:#0b0e13; padding:10px 12px;
+  }
+  #bottombar button { background:#22293a; color:#fff; border:none; border-radius:8px; padding:12px 20px; font-size:16px; }
+
+  .modal {
+    position:fixed; inset:0; background:rgba(0,0,0,0.85);
+    display:flex; align-items:center; justify-content:center; z-index:999;
+  }
+  .modal.hidden { display:none; }
+  .modalBox {
+    background:#1b212c; padding:22px; border-radius:12px; width:90%; max-width:420px; color:#fff;
+    max-height:85vh; overflow-y:auto;
+  }
+  .modalBox h2 { margin-top:0; font-size:16px; color:#ffb454; }
+  .modalBox p { font-size:13px; color:#9aa5b1; line-height:1.5; }
+  .modalBox label { display:block; font-size:12px; color:#9aa5b1; margin-top:10px; }
+  .modalBox input, .modalBox select {
+    width:100%; padding:10px; border-radius:8px; border:none; background:#2d3b4f; color:#fff;
+    font-size:14px; margin-top:4px; box-sizing:border-box;
+  }
+  .modalBox .row { display:flex; gap:8px; }
+  .modalBox .row > div { flex:1; }
+  .modalBox button.primary {
+    width:100%; padding:12px; border-radius:8px; border:none; background:#ff8c1a; color:#12161c;
+    font-weight:bold; font-size:14px; margin-top:16px;
+  }
+  .modalBox button.secondary {
+    width:100%; padding:10px; border-radius:8px; border:none; background:#22293a; color:#fff;
+    font-size:13px; margin-top:8px;
+  }
+  .closeX { float:right; cursor:pointer; font-size:18px; color:#9aa5b1; }
+</style>
+</head>
+<body>
+
+<div id="noMidiBanner">
+  ⚠️ เบราว์เซอร์นี้ไม่รองรับ Web MIDI API (เช่น Safari บน iPhone) — ใช้ Chrome หรือ Edge แทน
+  และต้องเปิดผ่าน HTTPS หรือ localhost เท่านั้น
+</div>
+
+<div id="topbar">
+  <button onclick="requestMidiAccess()">🔌 เชื่อม MIDI</button>
+  <select id="portSelect"></select>
+  <button onclick="addPage()">+ Page</button>
+  <span id="pageLabel">Page 1/1</span>
+  <span id="status">ยังไม่เชื่อมต่อ</span>
+</div>
+
+<div id="grid"></div>
+
+<div id="bottombar">
+  <button onclick="prevPage()">◀ Prev</button>
+  <button onclick="nextPage()">Next ▶</button>
+</div>
+
+<!-- Modal: แก้ไขปุ่ม (กดค้าง 1 ปุ่มเพื่อเปิด) -->
+<div id="editModal" class="modal hidden">
+  <div class="modalBox">
+    <span class="closeX" onclick="closeEdit()">✕</span>
+    <h2>แก้ไขปุ่ม</h2>
+    <label>ชื่อปุ่ม</label>
+    <input id="editLabel" type="text">
+    <label>คำอธิบายเล็ก (แถวล่าง)</label>
+    <input id="editSub" type="text">
+    <label>ชนิด MIDI</label>
+    <select id="editType">
+      <option value="pc">Program Change</option>
+      <option value="cc">Control Change</option>
+      <option value="note">Note On</option>
+    </select>
+    <div class="row">
+      <div>
+        <label>Channel (0-15)</label>
+        <input id="editChannel" type="number" min="0" max="15">
+      </div>
+      <div>
+        <label>Value (0-127)</label>
+        <input id="editValue" type="number" min="0" max="127">
+      </div>
+    </div>
+    <label>สีปุ่ม</label>
+    <input id="editColor" type="color">
+    <button class="primary" onclick="saveEdit()">บันทึก</button>
+  </div>
+</div>
+
+<script>
+const COLS = 8, ROWS = 4;
+const BUTTONS_PER_PAGE = COLS * ROWS;
+const STORAGE_KEY = 'midi_controller_config_v1';
+
+let midiAccess = null;
+let midiOutput = null;
+let CONFIG = null;
+let currentPage = 0;
+let editingIndex = null;
+
+// ---------- Config: โหลดจาก localStorage หรือสร้างค่าเริ่มต้น ----------
+function defaultPage(pageIndex, startPc = 0) {
+  const buttons = [];
+  for (let i = 0; i < BUTTONS_PER_PAGE; i++) {
+    buttons.push({
+      label: `P${pageIndex + 1}-${i + 1}`,
+      sub: 'PROG CHANGE',
+      type: 'pc',
+      channel: 0,
+      value: (startPc + i) % 128,
+      velocity: 100,
+      color: '#2d3b4f'
+    });
+  }
+  return buttons;
+}
+
+function loadConfig() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try { return JSON.parse(saved); } catch (e) {}
+  }
+  return { pages: [defaultPage(0)] };
+}
+
+function saveConfig() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(CONFIG));
+}
+
+// ---------- Web MIDI ----------
+async function requestMidiAccess() {
+  if (!navigator.requestMIDIAccess) {
+    document.getElementById('noMidiBanner').classList.add('show');
+    document.getElementById('status').textContent = 'เบราว์เซอร์ไม่รองรับ Web MIDI';
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    populatePorts();
+    midiAccess.onstatechange = populatePorts;
+    document.getElementById('status').textContent = 'พร้อมใช้งาน — เลือกพอร์ตด้านบน';
+  } catch (e) {
+    document.getElementById('status').textContent = 'ผู้ใช้ปฏิเสธสิทธิ์ MIDI หรือเกิดข้อผิดพลาด';
+  }
+}
+
+function populatePorts() {
+  const sel = document.getElementById('portSelect');
+  sel.innerHTML = '';
+  if (!midiAccess) return;
+  const outputs = Array.from(midiAccess.outputs.values());
+  if (outputs.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'ไม่พบอุปกรณ์ MIDI';
+    sel.appendChild(opt);
+    return;
+  }
+  outputs.forEach((port) => {
+    const opt = document.createElement('option');
+    opt.value = port.id;
+    opt.textContent = port.name;
+    sel.appendChild(opt);
+  });
+  midiOutput = outputs[0];
+  document.getElementById('status').textContent = `เชื่อมต่อ: ${midiOutput.name}`;
+}
+
+document.getElementById('portSelect').addEventListener('change', (e) => {
+  if (!midiAccess) return;
+  midiOutput = midiAccess.outputs.get(e.target.value);
+  document.getElementById('status').textContent = `เชื่อมต่อ: ${midiOutput.name}`;
+});
+
+function sendMidi(cfg) {
+  if (!midiOutput) {
+    document.getElementById('status').textContent = 'ยังไม่ได้เลือกอุปกรณ์ MIDI output';
+    return;
+  }
+  const ch = (cfg.channel || 0) & 0x0f;
+  let bytes;
+  if (cfg.type === 'pc') {
+    bytes = [0xC0 | ch, cfg.value & 0x7f];
+  } else if (cfg.type === 'cc') {
+    bytes = [0xB0 | ch, cfg.value & 0x7f, (cfg.cc_value ?? 127) & 0x7f];
+  } else if (cfg.type === 'note') {
+    bytes = [0x90 | ch, cfg.value & 0x7f, (cfg.velocity ?? 100) & 0x7f];
+  } else {
+    return;
+  }
+  try {
+    midiOutput.send(bytes);
+    document.getElementById('status').textContent = `Sent: [${bytes.join(', ')}]`;
+  } catch (e) {
+    document.getElementById('status').textContent = 'ส่ง MIDI ไม่สำเร็จ: ' + e.message;
+  }
+}
+
+// ---------- UI: Grid ----------
+function render() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  const buttons = CONFIG.pages[currentPage] || [];
+  buttons.forEach((cfg, i) => {
+    const pad = document.createElement('div');
+    pad.className = 'pad';
+    pad.style.background = cfg.color || '#2d3b4f';
+    pad.innerHTML = `${cfg.label}<small>${cfg.sub || ''}</small><span class="editIcon">✎</span>`;
+
+    let pressTimer = null;
+    pad.addEventListener('touchstart', () => {
+      pressTimer = setTimeout(() => openEdit(i), 550);
+    });
+    pad.addEventListener('touchend', () => clearTimeout(pressTimer));
+    pad.addEventListener('mousedown', () => {
+      pressTimer = setTimeout(() => openEdit(i), 550);
+    });
+    pad.addEventListener('mouseup', () => clearTimeout(pressTimer));
+
+    pad.addEventListener('click', () => {
+      document.querySelectorAll('.pad').forEach(p => p.classList.remove('active'));
+      pad.classList.add('active');
+      sendMidi(cfg);
+    });
+    grid.appendChild(pad);
+  });
+  document.getElementById('pageLabel').textContent =
+    `Page ${currentPage + 1}/${CONFIG.pages.length}`;
+}
+
+function prevPage() { if (currentPage > 0) { currentPage--; render(); } }
+function nextPage() { if (currentPage < CONFIG.pages.length - 1) { currentPage++; render(); } }
+function addPage() {
+  CONFIG.pages.push(defaultPage(CONFIG.pages.length));
+  currentPage = CONFIG.pages.length - 1;
+  saveConfig();
+  render();
+}
+
+// ---------- UI: Edit modal (กดค้างที่ปุ่มเพื่อแก้ไข) ----------
+function openEdit(index) {
+  editingIndex = index;
+  const cfg = CONFIG.pages[currentPage][index];
+  document.getElementById('editLabel').value = cfg.label;
+  document.getElementById('editSub').value = cfg.sub || '';
+  document.getElementById('editType').value = cfg.type;
+  document.getElementById('editChannel').value = cfg.channel;
+  document.getElementById('editValue').value = cfg.value;
+  document.getElementById('editColor').value = cfg.color || '#2d3b4f';
+  document.getElementById('editModal').classList.remove('hidden');
+}
+function closeEdit() {
+  document.getElementById('editModal').classList.add('hidden');
+}
+function saveEdit() {
+  const cfg = CONFIG.pages[currentPage][editingIndex];
+  cfg.label = document.getElementById('editLabel').value || cfg.label;
+  cfg.sub = document.getElementById('editSub').value;
+  cfg.type = document.getElementById('editType').value;
+  cfg.channel = parseInt(document.getElementById('editChannel').value) || 0;
+  cfg.value = parseInt(document.getElementById('editValue').value) || 0;
+  cfg.color = document.getElementById('editColor').value;
+  saveConfig();
+  closeEdit();
+  render();
+}
+
+// ---------- Init ----------
+document.addEventListener('DOMContentLoaded', () => {
+  CONFIG = loadConfig();
+  render();
+  requestMidiAccess(); // ขอสิทธิ์ MIDI ทันทีตอนเปิดหน้า (browser จะเด้ง popup ขออนุญาต)
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

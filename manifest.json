@@ -1,0 +1,19 @@
+{
+  "name": "Live MIDI Controller",
+  "short_name": "MIDI Ctrl",
+  "description": "Standalone live-performance MIDI grid controller using Web MIDI API",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12161c",
+  "theme_color": "#12161c",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
