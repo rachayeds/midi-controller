@@ -118,20 +118,33 @@
     <label>คำอธิบายเล็ก (แถวล่าง)</label>
     <input id="editSub" type="text">
     <label>ชนิด MIDI</label>
-    <select id="editType">
-      <option value="pc">Program Change</option>
+    <select id="editType" onchange="toggleBankFields()">
+      <option value="pc">Program Change (เปลี่ยนเสียง/Performance)</option>
       <option value="cc">Control Change</option>
       <option value="note">Note On</option>
     </select>
     <div class="row">
       <div>
-        <label>Channel (0-15)</label>
+        <label>Channel (1-16 ตามหน้าจอ MODX)</label>
         <input id="editChannel" type="number" min="0" max="15">
       </div>
       <div>
-        <label>Value (0-127)</label>
+        <label id="editValueLabel">Program Change (0-127)</label>
         <input id="editValue" type="number" min="0" max="127">
       </div>
+    </div>
+    <div id="bankFields">
+      <div class="row">
+        <div>
+          <label>Bank Select MSB (CC#0)</label>
+          <input id="editBankMsb" type="number" min="0" max="127">
+        </div>
+        <div>
+          <label>Bank Select LSB (CC#32)</label>
+          <input id="editBankLsb" type="number" min="0" max="127">
+        </div>
+      </div>
+      <p style="margin-top:6px;">ปุ่มนี้จะส่ง 3 ข้อความเรียงกันอัตโนมัติ: Bank MSB → Bank LSB → Program Change ตามลำดับที่ MODX6+ ต้องการ (ดูค่า MSB/LSB/PC ของแต่ละ Performance ได้จาก Voice/Performance List ในตัวเครื่องหรือ Data List ของ MODX)</p>
     </div>
     <label>สีปุ่ม</label>
     <input id="editColor" type="color">
@@ -156,10 +169,12 @@ function defaultPage(pageIndex, startPc = 0) {
   for (let i = 0; i < BUTTONS_PER_PAGE; i++) {
     buttons.push({
       label: `P${pageIndex + 1}-${i + 1}`,
-      sub: 'PROG CHANGE',
+      sub: 'MSB0 LSB0 PC' + ((startPc + i) % 128),
       type: 'pc',
       channel: 0,
-      value: (startPc + i) % 128,
+      value: (startPc + i) % 128,   // Program Change number
+      bank_msb: 0,                 // CC#0  - Bank Select MSB
+      bank_lsb: 0,                 // CC#32 - Bank Select LSB
       velocity: 100,
       color: '#2d3b4f'
     });
@@ -229,19 +244,32 @@ function sendMidi(cfg) {
     return;
   }
   const ch = (cfg.channel || 0) & 0x0f;
-  let bytes;
-  if (cfg.type === 'pc') {
-    bytes = [0xC0 | ch, cfg.value & 0x7f];
-  } else if (cfg.type === 'cc') {
-    bytes = [0xB0 | ch, cfg.value & 0x7f, (cfg.cc_value ?? 127) & 0x7f];
-  } else if (cfg.type === 'note') {
-    bytes = [0x90 | ch, cfg.value & 0x7f, (cfg.velocity ?? 100) & 0x7f];
-  } else {
-    return;
-  }
+
   try {
-    midiOutput.send(bytes);
-    document.getElementById('status').textContent = `Sent: [${bytes.join(', ')}]`;
+    if (cfg.type === 'pc') {
+      // ลำดับมาตรฐานสำหรับเลือก Performance บน Yamaha MODX:
+      // 1) Bank Select MSB (CC#0)  2) Bank Select LSB (CC#32)  3) Program Change
+      const msb = cfg.bank_msb ?? 0;
+      const lsb = cfg.bank_lsb ?? 0;
+      const ccMsb = [0xB0 | ch, 0, msb & 0x7f];
+      const ccLsb = [0xB0 | ch, 32, lsb & 0x7f];
+      const pc = [0xC0 | ch, cfg.value & 0x7f];
+
+      midiOutput.send(ccMsb);
+      midiOutput.send(ccLsb);
+      midiOutput.send(pc);
+
+      document.getElementById('status').textContent =
+        `Sent: MSB${msb} LSB${lsb} PC${cfg.value} (ch${ch + 1})`;
+    } else if (cfg.type === 'cc') {
+      const bytes = [0xB0 | ch, cfg.value & 0x7f, (cfg.cc_value ?? 127) & 0x7f];
+      midiOutput.send(bytes);
+      document.getElementById('status').textContent = `Sent: [${bytes.join(', ')}]`;
+    } else if (cfg.type === 'note') {
+      const bytes = [0x90 | ch, cfg.value & 0x7f, (cfg.velocity ?? 100) & 0x7f];
+      midiOutput.send(bytes);
+      document.getElementById('status').textContent = `Sent: [${bytes.join(', ')}]`;
+    }
   } catch (e) {
     document.getElementById('status').textContent = 'ส่ง MIDI ไม่สำเร็จ: ' + e.message;
   }
@@ -289,6 +317,14 @@ function addPage() {
 }
 
 // ---------- UI: Edit modal (กดค้างที่ปุ่มเพื่อแก้ไข) ----------
+function toggleBankFields() {
+  const type = document.getElementById('editType').value;
+  document.getElementById('bankFields').style.display = (type === 'pc') ? 'block' : 'none';
+  document.getElementById('editValueLabel').textContent =
+    type === 'pc' ? 'Program Change (0-127)' :
+    type === 'cc' ? 'CC Number (0-127)' : 'Note Number (0-127)';
+}
+
 function openEdit(index) {
   editingIndex = index;
   const cfg = CONFIG.pages[currentPage][index];
@@ -297,7 +333,10 @@ function openEdit(index) {
   document.getElementById('editType').value = cfg.type;
   document.getElementById('editChannel').value = cfg.channel;
   document.getElementById('editValue').value = cfg.value;
+  document.getElementById('editBankMsb').value = cfg.bank_msb ?? 0;
+  document.getElementById('editBankLsb').value = cfg.bank_lsb ?? 0;
   document.getElementById('editColor').value = cfg.color || '#2d3b4f';
+  toggleBankFields();
   document.getElementById('editModal').classList.remove('hidden');
 }
 function closeEdit() {
@@ -306,11 +345,21 @@ function closeEdit() {
 function saveEdit() {
   const cfg = CONFIG.pages[currentPage][editingIndex];
   cfg.label = document.getElementById('editLabel').value || cfg.label;
-  cfg.sub = document.getElementById('editSub').value;
   cfg.type = document.getElementById('editType').value;
   cfg.channel = parseInt(document.getElementById('editChannel').value) || 0;
   cfg.value = parseInt(document.getElementById('editValue').value) || 0;
+  cfg.bank_msb = parseInt(document.getElementById('editBankMsb').value) || 0;
+  cfg.bank_lsb = parseInt(document.getElementById('editBankLsb').value) || 0;
   cfg.color = document.getElementById('editColor').value;
+
+  const userSub = document.getElementById('editSub').value.trim();
+  if (cfg.type === 'pc') {
+    // ถ้าผู้ใช้ไม่ได้ตั้งชื่อเสียงเอง ใช้ตัวเลข MSB/LSB/PC แสดงแทน จะได้เช็คง่าย
+    cfg.sub = userSub || `MSB${cfg.bank_msb} LSB${cfg.bank_lsb} PC${cfg.value}`;
+  } else {
+    cfg.sub = userSub;
+  }
+
   saveConfig();
   closeEdit();
   render();
