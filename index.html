@@ -201,13 +201,14 @@ async function requestMidiAccess() {
     document.getElementById('status').textContent = 'เบราว์เซอร์ไม่รองรับ Web MIDI';
     return;
   }
+  document.getElementById('status').textContent = 'กำลังขอสิทธิ์ MIDI...';
   try {
     midiAccess = await navigator.requestMIDIAccess({ sysex: false });
     populatePorts();
     midiAccess.onstatechange = populatePorts;
-    document.getElementById('status').textContent = 'พร้อมใช้งาน — เลือกพอร์ตด้านบน';
   } catch (e) {
-    document.getElementById('status').textContent = 'ผู้ใช้ปฏิเสธสิทธิ์ MIDI หรือเกิดข้อผิดพลาด';
+    // แสดง error จริงบนหน้าจอเลย ไม่ต้องเปิด console
+    document.getElementById('status').textContent = `Error: ${e.name} - ${e.message}`;
   }
 }
 
@@ -369,7 +370,9 @@ function saveEdit() {
 document.addEventListener('DOMContentLoaded', () => {
   CONFIG = loadConfig();
   render();
-  requestMidiAccess(); // ขอสิทธิ์ MIDI ทันทีตอนเปิดหน้า (browser จะเด้ง popup ขออนุญาต)
+  // หมายเหตุ: ไม่เรียก requestMidiAccess() อัตโนมัติตรงนี้ เพราะเบราว์เซอร์บางตัว
+  // (โดยเฉพาะ Edge) จะปฏิเสธ/ไม่โชว์ popup ถ้าขอสิทธิ์โดยไม่มีการคลิกของผู้ใช้ก่อน
+  // ต้องกดปุ่ม "เชื่อม MIDI" เองเท่านั้น ถึงจะเห็น popup ขอสิทธิ์แน่นอน
 });
 
 if ('serviceWorker' in navigator) {
