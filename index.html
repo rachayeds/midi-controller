@@ -28,10 +28,11 @@
   #grid {
     display:grid;
     grid-template-columns: repeat(4, 1fr);
-    grid-auto-rows: 1fr;
+    grid-auto-rows: minmax(78px, auto);
     gap:6px;
     padding:8px;
     height: calc(100vh - 130px);
+    overflow-y: auto;
   }
   @media (min-width: 700px) {
     #grid { grid-template-columns: repeat(8, 1fr); }
@@ -96,6 +97,8 @@
 <div id="topbar">
   <button onclick="requestMidiAccess()">🔌 เชื่อม MIDI</button>
   <select id="portSelect"></select>
+  <button onclick="openBankManager()">🏦 Banks</button>
+  <button onclick="addButton()">+ Button</button>
   <button onclick="addPage()">+ Page</button>
   <span id="pageLabel">Page 1/1</span>
   <span id="status">ยังไม่เชื่อมต่อ</span>
@@ -106,6 +109,41 @@
 <div id="bottombar">
   <button onclick="prevPage()">◀ Prev</button>
   <button onclick="nextPage()">Next ▶</button>
+</div>
+
+<!-- Modal: จัดการฐานข้อมูล Bank (Preset/User/Library -> MSB/LSB) -->
+<div id="bankManagerModal" class="modal hidden">
+  <div class="modalBox">
+    <span class="closeX" onclick="closeBankManager()">✕</span>
+    <h2>ฐานข้อมูล Bank ของ MODX6+</h2>
+    <p>MSB คงที่ที่ <b>64</b> เสมอสำหรับเลือก Performance ส่วน LSB ต้องดูจากเครื่องจริง:
+       กดชื่อ Performance ค้างไว้บนหน้าจอ MODX → เมนู <b>Property</b> จะโชว์ MSB/LSB/PC ของอันนั้นให้ทันที
+       เอาเลข LSB ที่เห็นมากรอกที่นี่ครั้งเดียว แล้วเลือกใช้ซ้ำได้ทุกปุ่ม</p>
+
+    <div id="bankList"></div>
+
+    <h2 style="margin-top:18px;">เพิ่ม Bank ใหม่</h2>
+    <label>ประเภท Bank</label>
+    <select id="newBankType">
+      <option value="Preset">Preset</option>
+      <option value="User">User</option>
+      <option value="Library">Library</option>
+      <option value="Other">อื่นๆ</option>
+    </select>
+    <label>หมายเลข Bank (เช่น 1, 2, 3)</label>
+    <input id="newBankNumber" type="number" min="1" value="1">
+    <div class="row">
+      <div>
+        <label>MSB (ปกติ = 64)</label>
+        <input id="newBankMsb" type="number" min="0" max="127" value="64">
+      </div>
+      <div>
+        <label>LSB (ดูจากเครื่อง)</label>
+        <input id="newBankLsb" type="number" min="0" max="127" value="0">
+      </div>
+    </div>
+    <button class="secondary" onclick="addBank()">+ เพิ่ม Bank นี้</button>
+  </div>
 </div>
 
 <!-- Modal: แก้ไขปุ่ม (กดค้าง 1 ปุ่มเพื่อเปิด) -->
@@ -134,21 +172,14 @@
       </div>
     </div>
     <div id="bankFields">
-      <div class="row">
-        <div>
-          <label>Bank Select MSB (CC#0)</label>
-          <input id="editBankMsb" type="number" min="0" max="127">
-        </div>
-        <div>
-          <label>Bank Select LSB (CC#32)</label>
-          <input id="editBankLsb" type="number" min="0" max="127">
-        </div>
-      </div>
-      <p style="margin-top:6px;">ปุ่มนี้จะส่ง 3 ข้อความเรียงกันอัตโนมัติ: Bank MSB → Bank LSB → Program Change ตามลำดับที่ MODX6+ ต้องการ (ดูค่า MSB/LSB/PC ของแต่ละ Performance ได้จาก Voice/Performance List ในตัวเครื่องหรือ Data List ของ MODX)</p>
+      <label>เลือก Bank</label>
+      <select id="editBankRef" onchange="onBankRefChange()"></select>
+      <p style="margin-top:6px;">ปุ่มนี้จะส่ง 3 ข้อความเรียงกันอัตโนมัติ: Bank MSB → Bank LSB → Program Change ตามลำดับที่ MODX6+ ต้องการ ถ้ายังไม่มี Bank ที่ต้องการ กดปุ่ม 🏦 Banks ด้านบนเพื่อเพิ่มก่อน</p>
     </div>
     <label>สีปุ่ม</label>
     <input id="editColor" type="color">
     <button class="primary" onclick="saveEdit()">บันทึก</button>
+    <button class="secondary" onclick="deleteButton()" style="background:#5c1a1a;">🗑 ลบปุ่มนี้</button>
   </div>
 </div>
 
@@ -164,20 +195,42 @@ let currentPage = 0;
 let editingIndex = null;
 
 // ---------- Config: โหลดจาก localStorage หรือสร้างค่าเริ่มต้น ----------
+// ---------- Bank Database: Type + Number -> MSB/LSB ----------
+// MSB คงที่ 64 สำหรับเลือก Performance บน MODX/Montage เสมอ (ยืนยันจาก Yamaha community)
+// LSB ต่างกันตาม Bank จริง ต้องดูจากเครื่อง (Property บนหน้าจอ MODX) แล้วมากรอกเอง
+function defaultBankDatabase() {
+  return [
+    { id: 'bank_preset_1', type: 'Preset',  number: 1, msb: 64, lsb: 0 },
+    { id: 'bank_user_1',   type: 'User',    number: 1, msb: 64, lsb: 0 }
+  ];
+}
+
+function findBank(id) {
+  return (CONFIG.bankDatabase || []).find(b => b.id === id);
+}
+
+function bankLabel(b) {
+  return `${b.type} ${b.number} (MSB${b.msb} LSB${b.lsb})`;
+}
+
+// ---------- Config: โหลดจาก localStorage หรือสร้างค่าเริ่มต้น ----------
+function defaultButton(label, pcValue) {
+  return {
+    label: label,
+    sub: 'PC' + pcValue,
+    type: 'pc',
+    channel: 0,
+    value: pcValue % 128,
+    bankId: 'bank_preset_1',
+    velocity: 100,
+    color: '#2d3b4f'
+  };
+}
+
 function defaultPage(pageIndex, startPc = 0) {
   const buttons = [];
   for (let i = 0; i < BUTTONS_PER_PAGE; i++) {
-    buttons.push({
-      label: `P${pageIndex + 1}-${i + 1}`,
-      sub: 'MSB0 LSB0 PC' + ((startPc + i) % 128),
-      type: 'pc',
-      channel: 0,
-      value: (startPc + i) % 128,   // Program Change number
-      bank_msb: 0,                 // CC#0  - Bank Select MSB
-      bank_lsb: 0,                 // CC#32 - Bank Select LSB
-      velocity: 100,
-      color: '#2d3b4f'
-    });
+    buttons.push(defaultButton(`P${pageIndex + 1}-${i + 1}`, (startPc + i) % 128));
   }
   return buttons;
 }
@@ -185,9 +238,13 @@ function defaultPage(pageIndex, startPc = 0) {
 function loadConfig() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
-    try { return JSON.parse(saved); } catch (e) {}
+    try {
+      const data = JSON.parse(saved);
+      if (!data.bankDatabase) data.bankDatabase = defaultBankDatabase();
+      return data;
+    } catch (e) {}
   }
-  return { pages: [defaultPage(0)] };
+  return { pages: [defaultPage(0)], bankDatabase: defaultBankDatabase() };
 }
 
 function saveConfig() {
@@ -250,10 +307,9 @@ function sendMidi(cfg) {
     if (cfg.type === 'pc') {
       // ลำดับมาตรฐานสำหรับเลือก Performance บน Yamaha MODX:
       // 1) Bank Select MSB (CC#0)  2) Bank Select LSB (CC#32)  3) Program Change
-      const msb = cfg.bank_msb ?? 0;
-      const lsb = cfg.bank_lsb ?? 0;
-      const ccMsb = [0xB0 | ch, 0, msb & 0x7f];
-      const ccLsb = [0xB0 | ch, 32, lsb & 0x7f];
+      const bank = findBank(cfg.bankId) || { msb: 64, lsb: 0, type: '?', number: '?' };
+      const ccMsb = [0xB0 | ch, 0, bank.msb & 0x7f];
+      const ccLsb = [0xB0 | ch, 32, bank.lsb & 0x7f];
       const pc = [0xC0 | ch, cfg.value & 0x7f];
 
       midiOutput.send(ccMsb);
@@ -261,7 +317,7 @@ function sendMidi(cfg) {
       midiOutput.send(pc);
 
       document.getElementById('status').textContent =
-        `Sent: MSB${msb} LSB${lsb} PC${cfg.value} (ch${ch + 1})`;
+        `Sent: ${bank.type}${bank.number} MSB${bank.msb} LSB${bank.lsb} PC${cfg.value} (ch${ch + 1})`;
     } else if (cfg.type === 'cc') {
       const bytes = [0xB0 | ch, cfg.value & 0x7f, (cfg.cc_value ?? 127) & 0x7f];
       midiOutput.send(bytes);
@@ -316,6 +372,13 @@ function addPage() {
   saveConfig();
   render();
 }
+function addButton() {
+  const page = CONFIG.pages[currentPage];
+  const n = page.length + 1;
+  page.push(defaultButton(`P${currentPage + 1}-${n}`, (n - 1) % 128));
+  saveConfig();
+  render();
+}
 
 // ---------- UI: Edit modal (กดค้างที่ปุ่มเพื่อแก้ไข) ----------
 function toggleBankFields() {
@@ -326,6 +389,20 @@ function toggleBankFields() {
     type === 'cc' ? 'CC Number (0-127)' : 'Note Number (0-127)';
 }
 
+function populateBankRefSelect(selectedId) {
+  const sel = document.getElementById('editBankRef');
+  sel.innerHTML = '';
+  (CONFIG.bankDatabase || []).forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = bankLabel(b);
+    if (b.id === selectedId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function onBankRefChange() {} // เผื่อขยาย logic เพิ่มเติมในอนาคต
+
 function openEdit(index) {
   editingIndex = index;
   const cfg = CONFIG.pages[currentPage][index];
@@ -334,8 +411,7 @@ function openEdit(index) {
   document.getElementById('editType').value = cfg.type;
   document.getElementById('editChannel').value = cfg.channel;
   document.getElementById('editValue').value = cfg.value;
-  document.getElementById('editBankMsb').value = cfg.bank_msb ?? 0;
-  document.getElementById('editBankLsb').value = cfg.bank_lsb ?? 0;
+  populateBankRefSelect(cfg.bankId);
   document.getElementById('editColor').value = cfg.color || '#2d3b4f';
   toggleBankFields();
   document.getElementById('editModal').classList.remove('hidden');
@@ -349,14 +425,13 @@ function saveEdit() {
   cfg.type = document.getElementById('editType').value;
   cfg.channel = parseInt(document.getElementById('editChannel').value) || 0;
   cfg.value = parseInt(document.getElementById('editValue').value) || 0;
-  cfg.bank_msb = parseInt(document.getElementById('editBankMsb').value) || 0;
-  cfg.bank_lsb = parseInt(document.getElementById('editBankLsb').value) || 0;
+  cfg.bankId = document.getElementById('editBankRef').value;
   cfg.color = document.getElementById('editColor').value;
 
   const userSub = document.getElementById('editSub').value.trim();
   if (cfg.type === 'pc') {
-    // ถ้าผู้ใช้ไม่ได้ตั้งชื่อเสียงเอง ใช้ตัวเลข MSB/LSB/PC แสดงแทน จะได้เช็คง่าย
-    cfg.sub = userSub || `MSB${cfg.bank_msb} LSB${cfg.bank_lsb} PC${cfg.value}`;
+    const bank = findBank(cfg.bankId);
+    cfg.sub = userSub || (bank ? `${bank.type}${bank.number} PC${cfg.value}` : `PC${cfg.value}`);
   } else {
     cfg.sub = userSub;
   }
@@ -364,6 +439,49 @@ function saveEdit() {
   saveConfig();
   closeEdit();
   render();
+}
+function deleteButton() {
+  if (!confirm('ลบปุ่มนี้ออกจากหน้านี้?')) return;
+  CONFIG.pages[currentPage].splice(editingIndex, 1);
+  saveConfig();
+  closeEdit();
+  render();
+}
+function openBankManager() {
+  renderBankList();
+  document.getElementById('bankManagerModal').classList.remove('hidden');
+}
+function closeBankManager() {
+  document.getElementById('bankManagerModal').classList.add('hidden');
+}
+function renderBankList() {
+  const list = document.getElementById('bankList');
+  list.innerHTML = '';
+  (CONFIG.bankDatabase || []).forEach(b => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #2d3b4f;';
+    row.innerHTML = `
+      <div style="flex:1;font-size:13px;">${bankLabel(b)}</div>
+      <button onclick="removeBank('${b.id}')" style="background:#5c1a1a;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;">ลบ</button>
+    `;
+    list.appendChild(row);
+  });
+}
+function addBank() {
+  const type = document.getElementById('newBankType').value;
+  const number = parseInt(document.getElementById('newBankNumber').value) || 1;
+  const msb = parseInt(document.getElementById('newBankMsb').value) || 64;
+  const lsb = parseInt(document.getElementById('newBankLsb').value) || 0;
+  const id = `bank_${type.toLowerCase()}_${number}_${Date.now()}`;
+  if (!CONFIG.bankDatabase) CONFIG.bankDatabase = [];
+  CONFIG.bankDatabase.push({ id, type, number, msb, lsb });
+  saveConfig();
+  renderBankList();
+}
+function removeBank(id) {
+  CONFIG.bankDatabase = (CONFIG.bankDatabase || []).filter(b => b.id !== id);
+  saveConfig();
+  renderBankList();
 }
 
 // ---------- Init ----------
