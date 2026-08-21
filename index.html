@@ -97,7 +97,9 @@
 <div id="topbar">
   <button onclick="requestMidiAccess()">🔌 เชื่อม MIDI</button>
   <select id="portSelect"></select>
+  <button onclick="toggleFullscreen()">⛶ เต็มจอ</button>
   <button onclick="openBankManager()">🏦 Banks</button>
+  <button onclick="toggleFullscreen()">⛶ เต็มจอ</button>
   <button onclick="addButton()">+ Button</button>
   <button onclick="addPage()">+ Page</button>
   <span id="pageLabel">Page 1/1</span>
@@ -504,6 +506,33 @@ function removeBank(id) {
   CONFIG.bankDatabase = (CONFIG.bankDatabase || []).filter(b => b.id !== id);
   saveConfig();
   renderBankList();
+}
+
+// ---------- Fullscreen: ซ่อนแถบบน/ล่างของเบราว์เซอร์และระบบ Android ----------
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch((e) => {
+      document.getElementById('status').textContent = 'เบราว์เซอร์นี้ไม่รองรับ Fullscreen: ' + e.message;
+    });
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+// ---------- Fullscreen (ทางเลือกแทน Add to Home Screen) ----------
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen)
+      .call(el)
+      .catch((e) => {
+        document.getElementById('status').textContent =
+          'เข้าเต็มจอไม่ได้: ' + e.message;
+      });
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen)
+      .call(document);
+  }
 }
 
 // ---------- Init ----------
