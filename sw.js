@@ -1,4 +1,4 @@
-const CACHE = 'midi-controller-standalone-v1';
+const CACHE = 'midi-controller-standalone-v2';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -7,11 +7,25 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('activate', (e) => {
+  // ลบ cache รุ่นเก่าทิ้งทั้งหมด กันค้างเป็นไฟล์เก่าอีก
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+    )
+  );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (e) => {
+  // Network-first: พยายามโหลดของใหม่จากเน็ตก่อนเสมอ
+  // ถ้าออฟไลน์/โหลดไม่ได้ ค่อย fallback ไปใช้ของเก่าที่แคชไว้
   e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
+    fetch(e.request)
+      .then((res) => {
+        const resClone = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, resClone));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
