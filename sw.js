@@ -1,4 +1,4 @@
-const CACHE = 'midi-controller-standalone-v2';
+const CACHE = 'midi-controller-standalone-v3';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {

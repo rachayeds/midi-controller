@@ -172,9 +172,21 @@
       </div>
     </div>
     <div id="bankFields">
-      <label>เลือก Bank</label>
-      <select id="editBankRef" onchange="onBankRefChange()"></select>
-      <p style="margin-top:6px;">ปุ่มนี้จะส่ง 3 ข้อความเรียงกันอัตโนมัติ: Bank MSB → Bank LSB → Program Change ตามลำดับที่ MODX6+ ต้องการ ถ้ายังไม่มี Bank ที่ต้องการ กดปุ่ม 🏦 Banks ด้านบนเพื่อเพิ่มก่อน</p>
+      <label>เลือกจาก Bank ที่บันทึกไว้ (ไม่บังคับ — เลือกแล้วเติมเลขให้ แก้ต่อได้)</label>
+      <select id="editBankRef" onchange="onBankRefChange()">
+        <option value="">— เลือกเพื่อเติมอัตโนมัติ —</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Bank Select MSB (CC#0)</label>
+          <input id="editBankMsb" type="number" min="0" max="127">
+        </div>
+        <div>
+          <label>Bank Select LSB (CC#32)</label>
+          <input id="editBankLsb" type="number" min="0" max="127">
+        </div>
+      </div>
+      <p style="margin-top:6px;">ปุ่มนี้จะส่ง 3 ข้อความเรียงกันอัตโนมัติ: Bank MSB → Bank LSB → Program Change ตามลำดับที่ MODX6+ ต้องการ กรอก MSB/LSB เองตรงนี้ได้เลย หรือกดปุ่ม 🏦 Banks ด้านบนเพื่อบันทึกไว้ใช้ซ้ำ</p>
     </div>
     <label>สีปุ่ม</label>
     <input id="editColor" type="color">
@@ -221,7 +233,8 @@ function defaultButton(label, pcValue) {
     type: 'pc',
     channel: 0,
     value: pcValue % 128,
-    bankId: 'bank_preset_1',
+    bank_msb: 64,
+    bank_lsb: 0,
     velocity: 100,
     color: '#2d3b4f'
   };
@@ -307,9 +320,10 @@ function sendMidi(cfg) {
     if (cfg.type === 'pc') {
       // ลำดับมาตรฐานสำหรับเลือก Performance บน Yamaha MODX:
       // 1) Bank Select MSB (CC#0)  2) Bank Select LSB (CC#32)  3) Program Change
-      const bank = findBank(cfg.bankId) || { msb: 64, lsb: 0, type: '?', number: '?' };
-      const ccMsb = [0xB0 | ch, 0, bank.msb & 0x7f];
-      const ccLsb = [0xB0 | ch, 32, bank.lsb & 0x7f];
+      const msb = cfg.bank_msb ?? 64;
+      const lsb = cfg.bank_lsb ?? 0;
+      const ccMsb = [0xB0 | ch, 0, msb & 0x7f];
+      const ccLsb = [0xB0 | ch, 32, lsb & 0x7f];
       const pc = [0xC0 | ch, cfg.value & 0x7f];
 
       midiOutput.send(ccMsb);
@@ -317,7 +331,7 @@ function sendMidi(cfg) {
       midiOutput.send(pc);
 
       document.getElementById('status').textContent =
-        `Sent: ${bank.type}${bank.number} MSB${bank.msb} LSB${bank.lsb} PC${cfg.value} (ch${ch + 1})`;
+        `Sent: MSB${msb} LSB${lsb} PC${cfg.value} (ch${ch + 1})`;
     } else if (cfg.type === 'cc') {
       const bytes = [0xB0 | ch, cfg.value & 0x7f, (cfg.cc_value ?? 127) & 0x7f];
       midiOutput.send(bytes);
@@ -389,19 +403,25 @@ function toggleBankFields() {
     type === 'cc' ? 'CC Number (0-127)' : 'Note Number (0-127)';
 }
 
-function populateBankRefSelect(selectedId) {
+function populateBankRefSelect() {
   const sel = document.getElementById('editBankRef');
-  sel.innerHTML = '';
+  sel.innerHTML = '<option value="">— เลือกเพื่อเติมอัตโนมัติ —</option>';
   (CONFIG.bankDatabase || []).forEach(b => {
     const opt = document.createElement('option');
     opt.value = b.id;
     opt.textContent = bankLabel(b);
-    if (b.id === selectedId) opt.selected = true;
     sel.appendChild(opt);
   });
 }
 
-function onBankRefChange() {} // เผื่อขยาย logic เพิ่มเติมในอนาคต
+function onBankRefChange() {
+  const id = document.getElementById('editBankRef').value;
+  if (!id) return;
+  const bank = findBank(id);
+  if (!bank) return;
+  document.getElementById('editBankMsb').value = bank.msb;
+  document.getElementById('editBankLsb').value = bank.lsb;
+}
 
 function openEdit(index) {
   editingIndex = index;
@@ -411,7 +431,9 @@ function openEdit(index) {
   document.getElementById('editType').value = cfg.type;
   document.getElementById('editChannel').value = cfg.channel;
   document.getElementById('editValue').value = cfg.value;
-  populateBankRefSelect(cfg.bankId);
+  document.getElementById('editBankMsb').value = cfg.bank_msb ?? 64;
+  document.getElementById('editBankLsb').value = cfg.bank_lsb ?? 0;
+  populateBankRefSelect();
   document.getElementById('editColor').value = cfg.color || '#2d3b4f';
   toggleBankFields();
   document.getElementById('editModal').classList.remove('hidden');
@@ -425,13 +447,13 @@ function saveEdit() {
   cfg.type = document.getElementById('editType').value;
   cfg.channel = parseInt(document.getElementById('editChannel').value) || 0;
   cfg.value = parseInt(document.getElementById('editValue').value) || 0;
-  cfg.bankId = document.getElementById('editBankRef').value;
+  cfg.bank_msb = parseInt(document.getElementById('editBankMsb').value) || 0;
+  cfg.bank_lsb = parseInt(document.getElementById('editBankLsb').value) || 0;
   cfg.color = document.getElementById('editColor').value;
 
   const userSub = document.getElementById('editSub').value.trim();
   if (cfg.type === 'pc') {
-    const bank = findBank(cfg.bankId);
-    cfg.sub = userSub || (bank ? `${bank.type}${bank.number} PC${cfg.value}` : `PC${cfg.value}`);
+    cfg.sub = userSub || `MSB${cfg.bank_msb} LSB${cfg.bank_lsb} PC${cfg.value}`;
   } else {
     cfg.sub = userSub;
   }
